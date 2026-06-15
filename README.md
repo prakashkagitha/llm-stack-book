@@ -23,9 +23,16 @@ A book-length, ground-up treatment of the entire large language model stack: fro
 ## Building locally
 
 ```bash
+pip install -r requirements.txt
 python3 build.py          # renders content/ + figures/ into site/
 cd site && python3 -m http.server 8000   # then open http://localhost:8000
 ```
+
+## Deployment
+
+Pushing to `main` triggers [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml),
+which installs the pinned dependencies, runs `build.py`, and publishes `site/` to
+GitHub Pages. No manual deploy step is needed — just edit, commit, and push.
 
 ## License
 
